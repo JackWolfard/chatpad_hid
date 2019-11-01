@@ -10,6 +10,7 @@ char refresh_chatpad_buffer[8] = {0x87, 0x02, 0x8c, 0x1b, 0xd0};
 char chatpad_buffer[8];
 unsigned long current_time;
 unsigned long refresh_time;
+unsigned long repeat_time;
 
 struct pressed_key {
   char keycode;
@@ -21,7 +22,11 @@ struct pressed_key {
 struct pressed_key pressed_keys[2];
 
 int handle_read(char *chatpad_buffer, int buffer_size);
-int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time);
+int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time,
+                    void (*report_keypress)(struct pressed_key *));
+int handle_repeat_keys(struct pressed_key *pressed_keys, int pressed_keys_size, unsigned long current_time,
+                       void (*report_keypress)(struct pressed_key *));
+void report_keypress_serial(struct pressed_key *pressed_key);
 
 void setup() {
   USB_SERIAL.begin(9600);
@@ -31,7 +36,7 @@ void setup() {
   while (!CHATPAD_SERIAL);
   CHATPAD_SERIAL.write(initialize_chatpad_buffer, 8);
   refresh_time = millis();
-  repeat_time = millis();
+  repeat_time = refresh_time;
 }
 
 void loop() {
@@ -55,17 +60,15 @@ void loop() {
     if (characters_present >= 0) {
       // bug: note that when both keys are repeating and the first one is released, the second will be shifted over
       // to the other location in the pressed_keys meaning that it won't repeat anymore...
-      handle_keypress(pressed_keys, chatpad_buffer[3], chatpad_buffer[4], current_time);
-      handle_keypress(&pressed_keys[1], chatpad_buffer[3], chatpad_buffer[5], current_time);
+      handle_keypress(pressed_keys, chatpad_buffer[3], chatpad_buffer[4], current_time, report_keypress_serial);
+      handle_keypress(&pressed_keys[1], chatpad_buffer[3], chatpad_buffer[5], current_time, report_keypress_serial);
     }
-
-    // report key press
   }
 
   // check if currently pressed keys are repeating
   if (current_time - repeat_time > REPEAT_KEY_DELAY) {
     repeat_time = current_time;
-    handle_repeat_keys(pressed_keys, current_time);
+    handle_repeat_keys(pressed_keys, 2, current_time, report_keypress_serial);
   }
 }
 
@@ -107,15 +110,48 @@ int handle_read(char *chatpad_buffer, int buffer_size) {
  * @param modifier the state of the modifier keys
  * @param keycode the keycode reported by the Chatpad
  * @param current_time the current time
- * @return 1 if the pressed_key was update, 0 if not
+ * @return 1 if the pressed_key was updated, 0 if not
  */
-int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time) {
-  if (keycode && keycode != pressed_key->keycode) {
+int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time,
+                    void (*report_keypress)(struct pressed_key *)) {
+  if (keycode && keycode != pressed_key->keycode && modifier != pressed_key->modifier) {
     pressed_key->keycode = keycode;
     pressed_key->repeating = false;
     pressed_key->time_pressed = current_time;
     pressed_key->modifier = modifier;
+    report_keypress(pressed_key);
     return 1;
   }
   return 0;
+}
+
+/**
+ * Checks for keys which need to be repeated
+ * 
+ * @param pressed_keys an array of pressed key metadata
+ * @param pressed_keys_size the size of the array
+ * @param current_time the current time
+ * @return -1 for failure, 0 for success
+ */
+int handle_repeat_keys(struct pressed_key *pressed_keys, int pressed_keys_size, unsigned long current_time,
+                       void (*report_keypress)(struct pressed_key *)) {
+  if (pressed_keys_size <= 0) {
+    return -1;
+  }
+  for (struct pressed_key *pressed_key = pressed_keys; pressed_key < pressed_keys + pressed_keys_size;
+       pressed_key++) {
+    if (pressed_key->repeating) {
+      pressed_key->time_pressed = current_time;
+      report_keypress(pressed_key);
+    } else if (current_time - pressed_key->time_pressed > REPEAT_KEY_INIT_DELAY) {
+      pressed_key->repeating = true;
+      pressed_key->time_pressed = current_time;
+      report_keypress(pressed_key);
+    }
+  }
+  return 0;
+}
+
+void report_keypress_serial(struct pressed_key *pressed_key) {
+  
 }
