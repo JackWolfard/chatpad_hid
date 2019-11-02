@@ -5,8 +5,8 @@
 #define REPEAT_KEY_DELAY ((int) ((float) 1 / (float) REPEAT_KEYS_PER_SECOND * 1000)) // ms
 #define REFRESH_CHATPAD_TIME 800 // ms
 
-char initialize_chatpad_buffer[8] = {0x87, 0x02, 0x8c, 0x1f, 0xcc};
-char refresh_chatpad_buffer[8] = {0x87, 0x02, 0x8c, 0x1b, 0xd0};
+char initialize_chatpad_buffer[5] = {0x87, 0x02, 0x8c, 0x1f, 0xcc};
+char refresh_chatpad_buffer[5] = {0x87, 0x02, 0x8c, 0x1b, 0xd0};
 char chatpad_buffer[8];
 unsigned long current_time;
 unsigned long refresh_time;
@@ -33,8 +33,8 @@ void setup() {
   while (!USB_SERIAL);
   USB_SERIAL.println("Arduino Xbox 360 Chatpad Demo");
   CHATPAD_SERIAL.begin(19200, SERIAL_8N1);
-  while (!CHATPAD_SERIAL);
-  CHATPAD_SERIAL.write(initialize_chatpad_buffer, 8);
+  CHATPAD_SERIAL.write(initialize_chatpad_buffer, 5);
+  USB_SERIAL.println("Chatpad initialized");
   refresh_time = millis();
   repeat_time = refresh_time;
 }
@@ -45,13 +45,16 @@ void loop() {
   
   // check if chatpad serial port needs to be kept alive
   if (current_time - refresh_time > REFRESH_CHATPAD_TIME) {
+    USB_SERIAL.println("Refreshing Chatpad");
     refresh_time = current_time;
-    CHATPAD_SERIAL.write(refresh_chatpad_buffer, 8);
+    CHATPAD_SERIAL.write(refresh_chatpad_buffer, 5);
   }
 
   // check if 8 bytes can be read
-  if (CHATPAD_SERIAL.available() > 8) {
+  if (CHATPAD_SERIAL.available() >= 8) {
+    USB_SERIAL.println("Reading from Chatpad");
     CHATPAD_SERIAL.readBytes(chatpad_buffer, 8);
+    USB_SERIAL.write(chatpad_buffer, 8);
 
     // see how many character keys are pressed
     int characters_present = handle_read(chatpad_buffer, 8);
@@ -140,18 +143,29 @@ int handle_repeat_keys(struct pressed_key *pressed_keys, int pressed_keys_size, 
   }
   for (struct pressed_key *pressed_key = pressed_keys; pressed_key < pressed_keys + pressed_keys_size;
        pressed_key++) {
-    if (pressed_key->repeating) {
-      pressed_key->time_pressed = current_time;
-      report_keypress(pressed_key);
-    } else if (current_time - pressed_key->time_pressed > REPEAT_KEY_INIT_DELAY) {
-      pressed_key->repeating = true;
-      pressed_key->time_pressed = current_time;
-      report_keypress(pressed_key);
+    if (pressed_key->keycode) {
+      if (pressed_key->repeating) {
+        pressed_key->time_pressed = current_time;
+        report_keypress(pressed_key);
+      } else if (current_time - pressed_key->time_pressed > REPEAT_KEY_INIT_DELAY) {
+        pressed_key->repeating = true;
+        pressed_key->time_pressed = current_time;
+        report_keypress(pressed_key);
+      }
     }
   }
   return 0;
 }
 
+/**
+ * Report the pressed key to the USB Serial
+ * 
+ * @param pressed_key the key that was pressed
+ */
 void report_keypress_serial(struct pressed_key *pressed_key) {
-  
+  USB_SERIAL.print("key press: ");
+  USB_SERIAL.print(pressed_key->modifier, BIN);
+  USB_SERIAL.print(" ");
+  USB_SERIAL.print(pressed_key->keycode, HEX);
+  USB_SERIAL.println();
 }
