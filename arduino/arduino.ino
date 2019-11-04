@@ -3,7 +3,7 @@
 #define REPEAT_KEY_INIT_DELAY 500 // ms
 #define REPEAT_KEYS_PER_SECOND 4
 #define REPEAT_KEY_DELAY ((int) ((float) 1 / (float) REPEAT_KEYS_PER_SECOND * 1000)) // ms
-#define REFRESH_CHATPAD_TIME 800 // ms
+#define REFRESH_CHATPAD_TIME 1000 // ms
 
 char initialize_chatpad_buffer[5] = {0x87, 0x02, 0x8c, 0x1f, 0xcc};
 char refresh_chatpad_buffer[5] = {0x87, 0x02, 0x8c, 0x1b, 0xd0};
@@ -11,6 +11,7 @@ char chatpad_buffer[8];
 unsigned long current_time;
 unsigned long refresh_time;
 unsigned long repeat_time;
+int debug_chatpad = 0;
 
 struct pressed_key {
   char keycode;
@@ -21,12 +22,15 @@ struct pressed_key {
 
 struct pressed_key pressed_keys[2];
 
+int seek_to_header(void);
 int handle_read(char *chatpad_buffer, int buffer_size);
 int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time,
                     void (*report_keypress)(struct pressed_key *));
 int handle_repeat_keys(struct pressed_key *pressed_keys, int pressed_keys_size, unsigned long current_time,
                        void (*report_keypress)(struct pressed_key *));
 void report_keypress_serial(struct pressed_key *pressed_key);
+
+void write_serial_buffer(HardwareSerial *serial_port, char *write_buffer, int buffer_size);
 
 void setup() {
   USB_SERIAL.begin(9600);
@@ -37,6 +41,7 @@ void setup() {
   USB_SERIAL.println("Chatpad initialized");
   refresh_time = millis();
   repeat_time = refresh_time;
+  debug_chatpad = 0;
 }
 
 void loop() {
@@ -45,16 +50,24 @@ void loop() {
   
   // check if chatpad serial port needs to be kept alive
   if (current_time - refresh_time > REFRESH_CHATPAD_TIME) {
-    USB_SERIAL.println("Refreshing Chatpad");
+    if (debug_chatpad) {
+      USB_SERIAL.println("Refreshing Chatpad");
+    }
     refresh_time = current_time;
     CHATPAD_SERIAL.write(refresh_chatpad_buffer, 5);
   }
-
+  
   // check if 8 bytes can be read
-  if (CHATPAD_SERIAL.available() >= 8) {
-    USB_SERIAL.println("Reading from Chatpad");
+  if (CHATPAD_SERIAL.available() >= 8 && seek_to_header()) {
     CHATPAD_SERIAL.readBytes(chatpad_buffer, 8);
-    USB_SERIAL.write(chatpad_buffer, 8);
+    if (debug_chatpad) {
+      USB_SERIAL.println("Reading from Chatpad");
+      for (int i = 0; i < 8; i++) {
+        USB_SERIAL.print(chatpad_buffer[i], HEX);
+        USB_SERIAL.print(" ");
+      }
+      USB_SERIAL.println();
+    }
 
     // see how many character keys are pressed
     int characters_present = handle_read(chatpad_buffer, 8);
@@ -76,6 +89,23 @@ void loop() {
 }
 
 /**
+ * When called will seek for a header data in serial to realign the program with the Chatpad's 8 byte
+ * messages.
+ * 
+ * @return 0 if not able to find header data or < 8 bytes to read, 1 for at header data and >= 8 bytes to be read
+ */
+int seek_to_header() {
+  int available_data = CHATPAD_SERIAL.available();
+  char peek_header = CHATPAD_SERIAL.peek();
+  while (available_data >= 8 && !(peek_header == 0xb4 || peek_header == 0xa5)) {
+    CHATPAD_SERIAL.read();
+    available_data--;
+    peek_header = CHATPAD_SERIAL.peek();
+  }
+  return available_data >= 8;
+}
+
+/**
  * Takes the raw input from Chatpad and checks for a key press report 
  * 
  * @param chatpad_buffer the buffer to read from
@@ -93,12 +123,22 @@ int handle_read(char *chatpad_buffer, int buffer_size) {
       checksum += chatpad_buffer[i];
     }
     checksum = ~checksum + 1;
+    if (debug_chatpad) {
+      USB_SERIAL.print("Checksum value: ");
+      USB_SERIAL.print(checksum, HEX);
+      USB_SERIAL.println();
+    }
     if (checksum == chatpad_buffer[7]) {
       int characters_present = 0;
       for (int i = 4; i < 6; i++) {
         if (chatpad_buffer[i]) {
           characters_present++;
         }
+      }
+      if (debug_chatpad) {
+        USB_SERIAL.print("Characters present: ");
+        USB_SERIAL.print(characters_present);
+        USB_SERIAL.println();
       }
       return characters_present;
     }
@@ -117,12 +157,14 @@ int handle_read(char *chatpad_buffer, int buffer_size) {
  */
 int handle_keypress(struct pressed_key *pressed_key, char modifier, char keycode, unsigned long current_time,
                     void (*report_keypress)(struct pressed_key *)) {
-  if (keycode && keycode != pressed_key->keycode && modifier != pressed_key->modifier) {
+  if (keycode != pressed_key->keycode || modifier != pressed_key->modifier) {
     pressed_key->keycode = keycode;
     pressed_key->repeating = false;
     pressed_key->time_pressed = current_time;
     pressed_key->modifier = modifier;
-    report_keypress(pressed_key);
+    if (keycode) {
+      report_keypress(pressed_key);
+    }
     return 1;
   }
   return 0;
