@@ -27,10 +27,6 @@ void report_release(char modifier, char keycode);
 char translate_key(char modifier, char keycode);
 
 void setup() {
-//  USB_SERIAL.begin(9600);
-//  while (!USB_SERIAL);
-//  USB_SERIAL.println("Chatpad starting");
-//  USB_SERIAL.println(chatpad_characters[1][0]);
   Keyboard.begin();
   CHATPAD_SERIAL.begin(19200, SERIAL_8N1);
   CHATPAD_SERIAL.write(initialize_chatpad_buffer, 5);
@@ -126,7 +122,7 @@ int handle_keypress(struct pressed_key *pressed_keys, int pressed_keys_buffer_si
   int found = 0;
   if (keycode || (!IS_POWER_OF_2(modifier) && modifier)) {
     for (int i = 0; i < pressed_keys_buffer_size && !found; i++) {
-      if (keycode == pressed_keys[i].keycode && modifier == pressed_keys[i].modifier) {
+      if (keycode == pressed_keys[i].keycode) {
         found = 1;
         found_index = i;
       }
